@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>作品授權查詢 Rights Lookup</title>
+<style>
+  /* ========== 樣式：色彩集中在這裡，要換色只改這幾個變數 ========== */
+  :root {
+    --bg: #eef2f4;        /* 頁面底色 */
+    --card: #ffffff;      /* 作品卡片 */
+    --ink: #17252c;       /* 主要文字 */
+    --muted: #5d6f78;     /* 次要文字 */
+    --line: #d3dde2;      /* 分隔線 */
+    --brand: #1d4e5f;     /* 品牌深藍綠：標題、按鈕 */
+    --licensed-bg: #e3eaee; /* 已授權標籤底色（中性灰藍：表示「已被占用」） */
+    --licensed-ink: #34505c;
+    --free: #0b7a4b;      /* 可申請 PDF（綠色：表示「可以行動」） */
+    --free-bg: #e2f4ea;
+    --warn-bg: #fff4d6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { margin: 8px 0 4px; font-size: 1.6rem; color: var(--brand); }
+  .sub { margin: 0 0 20px; color: var(--muted); }
+
+  /* 查詢區 */
+  .panel { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+  .field { margin-bottom: 12px; }
+  label { display: block; font-weight: 600; margin-bottom: 4px; }
+  label small { font-weight: 400; color: var(--muted); }
+  input[type=search], input[type=text] {
+    width: 100%; padding: 11px 12px; font-size: 1rem;
+    border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink);
+  }
+  input:focus-visible, a:focus-visible, button:focus-visible { outline: 3px solid #7fb3c4; outline-offset: 2px; }
+
+  .status { margin: 14px 2px; color: var(--muted); font-size: .92rem; }
+  .banner { background: var(--warn-bg); border: 1px solid #ecd9a0; padding: 8px 12px; border-radius: 6px; margin-bottom: 14px; font-size: .9rem; }
+  .banner.error { background: #fde8e6; border-color: #f0b8b2; }
+
+  /* 作品卡片 */
+  .work { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .work h2 { margin: 0 0 6px; font-size: 1.15rem; }
+  .meta { display: grid; grid-template-columns: max-content 1fr; gap: 2px 14px; margin: 0 0 10px; font-size: .94rem; }
+  .meta dt { color: var(--muted); }
+  .meta dd { margin: 0; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+  .chip { background: var(--licensed-bg); color: var(--licensed-ink); padding: 2px 10px; border-radius: 999px; font-size: .88rem; }
+  .chip.mine { background: var(--brand); color: #fff; }   /* 查詢者所選國家若已授權，高亮顯示 */
+
+  /* 授權判定結果 */
+  .verdict { padding: 10px 12px; border-radius: 6px; font-size: .95rem; }
+  .verdict.taken { background: var(--licensed-bg); color: var(--licensed-ink); }
+  .verdict.free { background: var(--free-bg); color: #0a5c39; }
+  .verdict .btn {
+    display: inline-block; margin-top: 8px; padding: 8px 14px; border-radius: 6px;
+    background: var(--free); color: #fff; text-decoration: none; font-weight: 600;
+  }
+  .verdict .btn.alt { background: var(--brand); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>作品授權查詢 <span style="font-weight:400">Rights Lookup</span></h1>
+  <p class="sub">輸入書名、ISBN、作者或繪者，查看各國授權狀況。<br>Search by title, ISBN, author or illustrator to see licensed territories.</p>
+
+  <div class="panel">
+    <div class="field">
+      <label for="q">搜尋 Search <small>（原書名 / ISBN / 作者名 / 繪者名）</small></label>
+      <input id="q" type="search" placeholder="例：9784… 或 書名 或 作者名" autocomplete="off">
+    </div>
+    <div class="field" style="margin-bottom:0">
+      <label for="country">您的國家 Your country <small>（選填；填了才會判斷是否可申請 PDF）</small></label>
+      <input id="country" type="text" list="countryList" placeholder="例：台灣 / 中國 / 韓國 / Thailand" autocomplete="off">
+      <datalist id="countryList"></datalist>
+    </div>
+  </div>
+
+  <div id="banner"></div>
+  <div id="status" class="status" aria-live="polite"></div>
+  <div id="results"></div>
+</div>
+
+<script>
+/* =====================================================================
+ * 設定區（你只需要改這裡）
+ * ===================================================================== */
+const CONFIG = {
+  // 1) Google 試算表「發布到網路」後得到的 CSV 網址（見說明步驟）。
+  //    留空 "" 會改用下方示範資料，方便你先看畫面。
+  SHEET_CSV_URL: "https://docs.google.com/spreadsheets/d/e/2PACX-1vS4kYly5LthZ4ZxMAslsbtCYd2uAffBbQMA3h8bEoUMj139EBT9UAup293wiPBzrzSM9BkZ69U8fant/pub?output=csv",
+
+  // 2) 沒有 PDF 連結時，「申請 PDF」按鈕寄信到這個信箱
+  CONTACT_EMAIL: "rights@example.com",
+
+  // 3) 最多一次顯示幾筆結果（避免查詢字太短時列出整份清單）
+  MAX_RESULTS: 50,
+
+  // 4) 試算表欄位標題。左邊是程式內部名稱，右邊陣列是「可接受的標題寫法」。
+  //    你的 Excel 標題若不同，把它加進陣列即可。
+  COLUMNS: {
+    title:     ["原書名", "書名", "Title"],
+    isbn:      ["ISBN"],
+    author:    ["作者名", "作者", "Author"],
+    illustrator: ["繪者名", "繪者", "Illustrator"],
+    pubDate:   ["出版日", "出版日期", "Publication date"],
+    licensed:  ["已授權國家", "已授權語言", "授權國家", "Licensed territories"],
+    pdf:       ["PDF連結", "PDF 連結", "PDF link"]   // 新增的一欄：放 Drive 分享連結
+  },
+
+  // 5) 國家別名：把各種寫法統一成試算表裡使用的寫法（左邊小寫）。可自行追加。
+  COUNTRY_ALIASES: {
+    "臺灣": "台灣", "台湾": "台灣", "taiwan": "台灣",
+    "中国": "中國", "大陆": "中國", "中国大陆": "中國", "china": "中國",
+    "japan": "日本", "korea": "韓國", "south korea": "韓國", "韩国": "韓國",
+    "thailand": "泰國", "泰国": "泰國", "vietnam": "越南",
+    "hong kong": "香港", "france": "法國", "germany": "德國", "italy": "義大利",
+    "spain": "西班牙", "usa": "美國", "united states": "美國", "uk": "英國"
+  }
+};
+
+/* 示範資料：SHEET_CSV_URL 為空時使用 */
+const DEMO_CSV = `原書名,ISBN,作者名,繪者名,出版日,已授權國家,PDF連結
+"月亮的信",978-4-00-000001-1,山田花子,佐藤一郎,2021-03-15,"台灣[繁],中國[簡],韓國[韓]",https://drive.google.com/file/d/DEMO_ID_1/view
+"森林裡的早餐",978-4-00-000002-8,鈴木太郎,,2022-07-01,"台灣[繁]",https://drive.google.com/file/d/DEMO_ID_2/view
+"小熊的雨傘",978-4-00-000003-5,田中美咲,田中美咲,2023-11-20,"",`;
+
+/* =====================================================================
+ * 工具函式
+ * ===================================================================== */
+
+/** 正規化文字：全形轉半形、轉小寫、去頭尾空白（搜尋比對用） */
+function norm(s) {
+  return String(s || "").normalize("NFKC").toLowerCase().trim();
+}
+
+/** 正規化 ISBN：只留數字與 X（去掉 - 與空白），Excel 轉出的 ISBN 常帶連字號 */
+function normIsbn(s) {
+  return String(s || "").replace(/[^0-9xX]/g, "").toUpperCase();
+}
+
+/** 正規化國家名：臺→台、套用別名表 */
+function normCountry(s) {
+  let c = norm(s).replace(/臺/g, "台");
+  return (CONFIG.COUNTRY_ALIASES[c] || c).toLowerCase();
+}
+
+/** 把文字安全放進 HTML，避免試算表內容含 < > 造成畫面錯亂或安全問題 */
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g,
+    ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+}
+
+/** 簡易 CSV 解析（支援雙引號包住的欄位、欄位內逗號與換行） */
+function parseCSV(text) {
+  const rows = [];
+  let row = [], cell = "", inQuotes = false;
+  text = text.replace(/^\uFEFF/, "");               // 去掉 BOM
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQuotes) {
+      if (ch === '"' && text[i + 1] === '"') { cell += '"'; i++; }   // "" 代表一個引號
+      else if (ch === '"') inQuotes = false;
+      else cell += ch;
+    } else if (ch === '"') inQuotes = true;
+    else if (ch === ",") { row.push(cell); cell = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cell); cell = "";
+      if (row.some(c => c.trim() !== "")) rows.push(row);   // 略過空白列
+      row = [];
+    } else cell += ch;
+  }
+  row.push(cell);
+  if (row.some(c => c.trim() !== "")) rows.push(row);
+  return rows;
+}
+
+/**
+ * 解析「已授權國家」字串。
+ * 輸入："台灣[繁],中國[簡]"  →  [{name:"台灣", lang:"繁", key:"台灣"}, ...]
+ * 分隔符號容許 , ， 、 ; ； 換行；括號容許 [] ［］ 【】。
+ */
+function parseLicensed(str) {
+  str = String(str || "");
+  const result = [];
+  // 主要寫法：「國家[語言]」，國家之間用空白或逗號都可以；多打的 ] 會被容忍（如 中國[簡]]）
+  const re = /([^\[［【,，、;；\n]+?)\s*[\[［【]\s*([^\]］】]*?)\s*[\]］】]+/g;
+  let m;
+  while ((m = re.exec(str)) !== null) {
+    const name = m[1].trim();
+    if (name) result.push({ name, lang: m[2], key: normCountry(name) });
+  }
+  // 備用：完全沒有括號（例如只寫「台灣」）時，用分隔符號或空白切開
+  if (!result.length && str.trim()) {
+    str.split(/[\s,，、;；]+/).filter(Boolean).forEach(name =>
+      result.push({ name, lang: "", key: normCountry(name) }));
+  }
+  return result;
+}
+
+/** 把 CSV 的二維陣列轉成作品物件陣列（依標題文字找欄位，欄位順序不影響） */
+function rowsToWorks(rows) {
+  if (rows.length < 2) return [];
+  const header = rows[0].map(h => h.trim());
+  const idx = {};                                      // 內部名稱 → 欄位位置
+  for (const [key, names] of Object.entries(CONFIG.COLUMNS)) {
+    idx[key] = header.findIndex(h => names.some(n => norm(n) === norm(h)));
+  }
+  if (idx.title < 0) throw new Error("找不到「原書名」欄位，請檢查試算表第一列的標題。");
+  const get = (r, k) => (idx[k] >= 0 ? (r[idx[k]] || "").trim() : "");
+
+  return rows.slice(1).map(r => {
+    const w = {
+      title: get(r, "title"), isbn: get(r, "isbn"), author: get(r, "author"),
+      illustrator: get(r, "illustrator"), pubDate: get(r, "pubDate"),
+      licensedRaw: get(r, "licensed"), pdf: get(r, "pdf")
+    };
+    w.licensed = parseLicensed(w.licensedRaw);
+    // 預先算好搜尋用字串，搜尋時就不必每次重算（較快、也較好除錯）
+    w.searchText = [w.title, w.author, w.illustrator].map(norm).join("\n");
+    w.isbnKey = normIsbn(w.isbn);
+    return w;
+  }).filter(w => w.title || w.isbn);
+}
+
+/* =====================================================================
+ * 資料載入
+ * ===================================================================== */
+let WORKS = [];
+
+async function loadData() {
+  const banner = document.getElementById("banner");
+  try {
+    let csvText;
+    if (!CONFIG.SHEET_CSV_URL) {
+      csvText = DEMO_CSV;
+      banner.innerHTML = '<div class="banner">目前顯示的是示範資料。請在程式上方 CONFIG.SHEET_CSV_URL 填入試算表網址。</div>';
+    } else {
+      // cache: "no-store" 讓瀏覽器每次都重新抓，試算表更新後才看得到
+      const resp = await fetch(CONFIG.SHEET_CSV_URL, { cache: "no-store" });
+      if (!resp.ok) throw new Error("讀取試算表失敗（HTTP " + resp.status + "）");
+      csvText = await resp.text();
+    }
+    WORKS = rowsToWorks(parseCSV(csvText));
+    buildCountryList();
+    document.getElementById("status").textContent = "共 " + WORKS.length + " 部作品。請輸入關鍵字查詢。";
+    console.log("[載入完成] 作品數：", WORKS.length, WORKS.slice(0, 3));   // 除錯：看前 3 筆解析結果
+  } catch (err) {
+    console.error(err);
+    banner.innerHTML = '<div class="banner error">資料載入失敗：' + esc(err.message) +
+      '<br>請稍後再試，或寄信至 ' + esc(CONFIG.CONTACT_EMAIL) + '。</div>';
+  }
+}
+
+/** 用資料裡出現過的國家，建立國家輸入框的建議清單 */
+function buildCountryList() {
+  const names = new Set();
+  WORKS.forEach(w => w.licensed.forEach(l => names.add(l.name)));
+  document.getElementById("countryList").innerHTML =
+    [...names].sort().map(n => '<option value="' + esc(n) + '">').join("");
+}
+
+/* =====================================================================
+ * 搜尋與顯示
+ * ===================================================================== */
+
+/** 依關鍵字找作品：書名/作者/繪者 用「包含」比對；ISBN 去掉連字號後比對 */
+function search(query) {
+  const q = norm(query);
+  if (!q) return [];
+  const qIsbn = normIsbn(query);
+  const isbnSearch = qIsbn.length >= 4 && /^[0-9x-]+$/i.test(q.replace(/\s/g, ""));
+  return WORKS.filter(w =>
+    w.searchText.includes(q) || (isbnSearch && w.isbnKey.includes(qIsbn)));
+}
+
+/** 產生「授權判定」區塊：依查詢者國家決定顯示已授權或可申請 PDF */
+function verdictHTML(w, countryInput) {
+  if (!countryInput.trim()) return "";                       // 沒填國家就不判定
+  const key = normCountry(countryInput);
+  const hit = w.licensed.find(l => l.key === key);
+  if (hit) {
+    const lang = hit.lang ? "（" + esc(hit.lang) + "）" : "";
+    return '<div class="verdict taken">此作品在「' + esc(hit.name) + '」已授權' + lang +
+           '。如需洽詢請聯絡 ' + esc(CONFIG.CONTACT_EMAIL) + '。<br>Already licensed in this territory.</div>';
+  }
+  // 國家不在已授權清單 → 可申請 PDF
+  let action;
+  if (/^https:\/\//i.test(w.pdf)) {
+    action = '<a class="btn" href="' + esc(w.pdf) + '" target="_blank" rel="noopener">下載 PDF Download</a>';
+  } else {
+    const subject = encodeURIComponent("PDF 申請：" + w.title + " / " + w.isbn);
+    const body = encodeURIComponent("國家 Country: " + countryInput + "\n書名 Title: " + w.title + "\nISBN: " + w.isbn);
+    action = '<a class="btn alt" href="mailto:' + esc(CONFIG.CONTACT_EMAIL) + '?subject=' + subject + '&body=' + body +
+             '">寄信申請 PDF Request by email</a>';
+  }
+  return '<div class="verdict free">此作品在「' + esc(countryInput) + '」尚未授權，可申請 PDF。<br>' +
+         'Not yet licensed in this territory.<br>' + action + '</div>';
+}
+
+/** 單一作品卡片 */
+function cardHTML(w, countryInput) {
+  const myKey = countryInput.trim() ? normCountry(countryInput) : null;
+  const chips = w.licensed.length
+    ? w.licensed.map(l => '<span class="chip' + (l.key === myKey ? ' mine' : '') + '">' +
+        esc(l.name) + (l.lang ? '[' + esc(l.lang) + ']' : '') + '</span>').join("")
+    : '<span style="color:var(--muted)">尚無授權 None yet</span>';
+  return '<article class="work">' +
+    '<h2>' + esc(w.title) + '</h2>' +
+    '<dl class="meta">' +
+      '<dt>ISBN</dt><dd>' + esc(w.isbn || "—") + '</dd>' +
+      '<dt>作者 Author</dt><dd>' + esc(w.author || "—") + '</dd>' +
+      '<dt>繪者 Illustrator</dt><dd>' + esc(w.illustrator || "—") + '</dd>' +
+      '<dt>出版日 Published</dt><dd>' + esc(w.pubDate || "—") + '</dd>' +
+    '</dl>' +
+    '<div><strong>已授權國家 Licensed</strong></div>' +
+    '<div class="chips">' + chips + '</div>' +
+    verdictHTML(w, countryInput) +
+    '</article>';
+}
+
+/** 重新查詢並畫出結果（輸入框每次變動都會呼叫） */
+function render() {
+  const query = document.getElementById("q").value;
+  const country = document.getElementById("country").value;
+  const status = document.getElementById("status");
+  const box = document.getElementById("results");
+
+  if (!query.trim()) {
+    box.innerHTML = "";
+    status.textContent = WORKS.length ? "共 " + WORKS.length + " 部作品。請輸入關鍵字查詢。" : "";
+    return;
+  }
+  const found = search(query);
+  const shown = found.slice(0, CONFIG.MAX_RESULTS);
+  if (!found.length) {
+    box.innerHTML = "";
+    status.textContent = "找不到符合的作品。請檢查拼字，或改用 ISBN 查詢。No match found.";
+    return;
+  }
+  status.textContent = "找到 " + found.length + " 筆" +
+    (found.length > shown.length ? "，僅顯示前 " + shown.length + " 筆，請輸入更完整的關鍵字" : "") + "。";
+  box.innerHTML = shown.map(w => cardHTML(w, country)).join("");
+}
+
+/* 輸入時稍微延遲（250ms）再搜尋，避免每打一個字就重畫 */
+let timer = null;
+function onInput() { clearTimeout(timer); timer = setTimeout(render, 250); }
+document.getElementById("q").addEventListener("input", onInput);
+document.getElementById("country").addEventListener("input", onInput);
+
+loadData();
+</script>
+</body>
+</html>
